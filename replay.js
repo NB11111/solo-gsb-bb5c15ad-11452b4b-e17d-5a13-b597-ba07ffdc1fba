@@ -1,6 +1,29 @@
 'use strict';
 
 /**
+ * 名称键字典：统一使用无原型对象。
+ *
+ * 名称接口允许录入任意名称（含「__proto__」这类特殊名称）；若用普通对象
+ * 按名称存状态，「__proto__」会命中 Object.prototype 上的原型访问器
+ * （赋值被改写到原型、枚举不到、读取得到原型对象），导致该道具从终态
+ * 消失或该区位从最终区位表消失。无原型对象没有原型访问器，任何名称都
+ * 只是普通数据键。
+ */
+function newDict() {
+  return Object.create(null);
+}
+
+/** 复制一个名称键字典（结果同样是无原型对象，保留「__proto__」等特殊键） */
+function dictCopy(src) {
+  return Object.assign(Object.create(null), src);
+}
+
+/** 判断名称是否为字典中真实存在的键（不认可原型链上继承来的成员） */
+function hasKey(dict, key) {
+  return Object.prototype.hasOwnProperty.call(dict, key);
+}
+
+/**
  * 逐组校验并应用提示（重放规则的唯一实现，全量重放与现场偏差推演共用）。
  *
  * 规则：
@@ -39,7 +62,7 @@ function runCues(locations, cues, state, lastMoved) {
 
     // 2) 基于变动前状态校验来源
     for (const t of cue.transfers) {
-      if (!(t.prop in state)) {
+      if (!hasKey(state, t.prop)) {
         errors.push(`道具「${t.prop}」不存在`);
       } else if (state[t.prop] !== t.from) {
         errors.push(`道具「${t.prop}」当前位于「${state[t.prop]}」，不在来源区位「${t.from}」`);
@@ -59,7 +82,7 @@ function runCues(locations, cues, state, lastMoved) {
     // 3) 试算整组完成后的占用情况（来源校验通过才有意义）
     let next = null;
     if (errors.length === 0) {
-      next = { ...state };
+      next = dictCopy(state);
       for (const t of cue.transfers) next[t.prop] = t.to;
 
       const occupancy = new Map(); // 区位 -> [道具]
@@ -109,12 +132,12 @@ function runCues(locations, cues, state, lastMoved) {
  */
 const ONSITE_MARK = 'onsite';
 
-/** 汇总最终区位：区位 -> [道具] */
+/** 汇总最终区位：区位 -> [道具]（无原型字典，区位名可能为「__proto__」等特殊名称） */
 function buildFinalLocations(locations, state) {
-  const finalLocations = {};
+  const finalLocations = newDict();
   for (const l of locations) finalLocations[l.name] = [];
   for (const [prop, loc] of Object.entries(state)) {
-    if (!finalLocations[loc]) finalLocations[loc] = [];
+    if (!hasKey(finalLocations, loc)) finalLocations[loc] = [];
     finalLocations[loc].push(prop);
   }
   return finalLocations;
@@ -158,12 +181,13 @@ function occupancyConflicts(locations, state) {
  *             capacityConflicts: Array<{location, occupants: Array<{prop, movedIn, lastMovedCue}>}>}}
  */
 function replay(locations, props, cues) {
-  // 当前状态：道具 -> 区位（从初始区位开始）
-  const state = {};
+  // 当前状态：道具 -> 区位（从初始区位开始）。无原型字典，道具名可能为
+  // 「__proto__」等特殊名称，必须始终按数据键存取。
+  const state = newDict();
   for (const p of props) state[p.name] = p.location;
 
   // 溯源：道具 -> 最后一次成功转移它的提示号（null = 从未成功转移，现处初始区位）
-  const lastMoved = {};
+  const lastMoved = newDict();
   for (const p of props) lastMoved[p.name] = null;
 
   const run = runCues(locations, cues, state, lastMoved);
@@ -186,8 +210,10 @@ function replay(locations, props, cues) {
  * @returns {ReturnType<replay>}
  */
 function replayFrom(locations, restCues, startState, startLastMoved) {
-  const state = { ...startState };
-  const lastMoved = { ...startLastMoved };
+  // 拷贝为无原型字典：调用方（现场偏差推演）可能以普通对象传入，复制后
+  // 「__proto__」等特殊名称一律按数据键处理，且不修改入参
+  const state = dictCopy(startState);
+  const lastMoved = dictCopy(startLastMoved);
   const run = runCues(locations, restCues, state, lastMoved);
   return {
     results: run.results,
@@ -241,4 +267,15 @@ function diffReplays(before, after) {
   return { changedCues, movedProps };
 }
 
-module.exports = { replay, replayFrom, runCues, occupancyConflicts, buildFinalLocations, ONSITE_MARK, diffReplays };
+module.exports = {
+  replay,
+  replayFrom,
+  runCues,
+  occupancyConflicts,
+  buildFinalLocations,
+  ONSITE_MARK,
+  diffReplays,
+  newDict,
+  dictCopy,
+  hasKey,
+};

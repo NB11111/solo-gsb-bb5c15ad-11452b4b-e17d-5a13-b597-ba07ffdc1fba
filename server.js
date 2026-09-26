@@ -8,6 +8,8 @@ const {
   occupancyConflicts,
   ONSITE_MARK,
   diffReplays,
+  newDict,
+  dictCopy,
 } = require('./replay');
 const { computeAssignments } = require('./assignment');
 const { computeRotation } = require('./rotation');
@@ -436,7 +438,9 @@ app.post('/api/onsite/simulate', (req, res) => {
   }
   if (!Array.isArray(raw)) return badSim(res, '现场区位录入格式不正确');
 
-  const overrides = {};
+  // 无原型字典承载按道具名的现场录入：名为「__proto__」的道具也必须是
+  // 普通数据键（普通对象上对该键赋值会命中原型访问器而被丢弃）
+  const overrides = newDict();
   for (const item of raw) {
     if (!item || typeof item !== 'object') return badSim(res, '现场区位录入格式不正确');
     const prop = String(item.prop || '').trim();
@@ -461,9 +465,11 @@ app.post('/api/onsite/simulate', (req, res) => {
   const planStateAtBreakpoint = planPrefix.finalState;
 
   // 2) 校正为现场状态：未录入者沿用该断点的计划区位
-  const onsiteState = { ...planStateAtBreakpoint };
-  const onsiteLastMoved = { ...planPrefix.lastMoved };
-  const recorded = {};
+  // dictCopy 输出无原型字典：现场录入名为「__proto__」的道具时按数据键写入，
+  // 同时不修改重放得到的计划状态对象
+  const onsiteState = dictCopy(planStateAtBreakpoint);
+  const onsiteLastMoved = dictCopy(planPrefix.lastMoved);
+  const recorded = newDict();
   for (const [prop, location] of Object.entries(overrides)) {
     if (location !== '') {
       onsiteState[prop] = location;

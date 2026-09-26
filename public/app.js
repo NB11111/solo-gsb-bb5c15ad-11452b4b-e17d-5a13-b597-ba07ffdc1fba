@@ -8,6 +8,15 @@ let editingCue = null; // 正在编辑的提示号，null 表示新增模式
 
 const $ = (sel) => document.querySelector(sel);
 
+/*
+ * 名称键字典：用无原型对象。道具/区位名允许为「__proto__」等特殊名称，
+ * 普通对象对该名称赋值会命中原型访问器而被丢弃（现场录入因此无法提交、
+ * 重渲染后选择丢失）。无原型对象把一切名称都当普通数据键。
+ */
+function nameMap() {
+  return Object.create(null);
+}
+
 function toast(msg, okStyle) {
   const el = $('#toast');
   el.textContent = msg;
@@ -790,7 +799,7 @@ $('#shift-form').addEventListener('submit', async (e) => {
 /* ---------- 现场偏差推演（不写库） ---------- */
 
 let simBreakpoint = '';      // 选中的断点提示号
-let simOverrides = {};       // 道具 -> 现场区位（'' 或缺失 = 沿用计划）
+let simOverrides = nameMap(); // 道具 -> 现场区位（'' 或缺失 = 沿用计划）；无原型以支持特殊名称
 let simResult = null;        // 最近一次成功推演的结果，全局状态一变即失效
 
 function clearSimResult() {
