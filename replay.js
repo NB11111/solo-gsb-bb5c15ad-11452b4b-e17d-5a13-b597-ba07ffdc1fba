@@ -1,6 +1,36 @@
 'use strict';
 
 /**
+ * 名称 -> 值 的安全映射：键一律存为数据属性。
+ * 名称可能是「__proto__」「constructor」等会命中普通对象原型链的特殊串，
+ * 普通对象按名称存取会被原型的访问器/内置成员截获，导致状态丢失或污染
+ * Object.prototype；无原型对象没有任何继承成员，任何名称都只按数据键处理。
+ * @returns {Object<string,V>}
+ * @template V
+ */
+function nameMap() {
+  return Object.create(null);
+}
+
+/**
+ * 复制一个名称映射（同样产出无原型对象）。
+ * 原生展开 { ...src } 虽会以 Define 语义保留「__proto__」数据键，
+ * 但产物仍继承 Object.prototype：一旦该键原先不存在，随后的
+ * obj['__proto__'] = ... 赋值会命中原型访问器而被丢弃。统一经
+ * 无原型对象复制，可保证任何名称在后续赋值中始终是数据键。
+ */
+function cloneMap(src) {
+  const dst = nameMap();
+  for (const key of Object.keys(src)) dst[key] = src[key];
+  return dst;
+}
+
+/** 名称是否为映射中真实存在的数据键（而非原型链上的成员） */
+function hasOwn(map, key) {
+  return Object.prototype.hasOwnProperty.call(map, key);
+}
+
+/**
  * 逐组校验并应用提示（重放规则的唯一实现，全量重放与现场偏差推演共用）。
  *
  * 规则：
@@ -17,7 +47,9 @@
  *  - 容量冲突：记录试算后同占该区位的全部道具，标明是否由本组转入，
  *    以及各道具此前（组前状态）最后一次成功转移的提示号。
  *
- * 注意：会就地修改传入的 state / lastMoved，需要保留原状态时调用方应先拷贝。
+ * 注意：会就地修改传入的 state / lastMoved，需要保留原状态时调用方应先拷贝
+ * （cloneMap）；state / lastMoved 应为 nameMap() 产生的无原型映射
+ * （replay / replayFrom 已保证），否则「__proto__」等名称会命中对象原型。
  *
  * @returns {{results: Array, state: Object<string,string>, lastMoved: Object<string,*>}}
  */
@@ -39,7 +71,7 @@ function runCues(locations, cues, state, lastMoved) {
 
     // 2) 基于变动前状态校验来源
     for (const t of cue.transfers) {
-      if (!(t.prop in state)) {
+      if (!hasOwn(state, t.prop)) {
         errors.push(`道具「${t.prop}」不存在`);
       } else if (state[t.prop] !== t.from) {
         errors.push(`道具「${t.prop}」当前位于「${state[t.prop]}」，不在来源区位「${t.from}」`);
@@ -59,7 +91,7 @@ function runCues(locations, cues, state, lastMoved) {
     // 3) 试算整组完成后的占用情况（来源校验通过才有意义）
     let next = null;
     if (errors.length === 0) {
-      next = { ...state };
+      next = cloneMap(state);
       for (const t of cue.transfers) next[t.prop] = t.to;
 
       const occupancy = new Map(); // 区位 -> [道具]
@@ -82,7 +114,7 @@ function runCues(locations, cues, state, lastMoved) {
             occupants: occupants.map((p) => ({
               prop: p,
               movedIn: movedIn.has(p),
-              lastMovedCue: lastMoved[p] !== undefined ? lastMoved[p] : null,
+              lastMovedCue: hasOwn(lastMoved, p) ? lastMoved[p] : null,
             })),
           });
         }
@@ -109,12 +141,12 @@ function runCues(locations, cues, state, lastMoved) {
  */
 const ONSITE_MARK = 'onsite';
 
-/** 汇总最终区位：区位 -> [道具] */
+/** 汇总最终区位：区位 -> [道具]（区位名同样按数据键处理，见 nameMap） */
 function buildFinalLocations(locations, state) {
-  const finalLocations = {};
+  const finalLocations = nameMap();
   for (const l of locations) finalLocations[l.name] = [];
   for (const [prop, loc] of Object.entries(state)) {
-    if (!finalLocations[loc]) finalLocations[loc] = [];
+    if (!hasOwn(finalLocations, loc)) finalLocations[loc] = [];
     finalLocations[loc].push(prop);
   }
   return finalLocations;
@@ -159,11 +191,12 @@ function occupancyConflicts(locations, state) {
  */
 function replay(locations, props, cues) {
   // 当前状态：道具 -> 区位（从初始区位开始）
-  const state = {};
+  // 无原型映射：道具名可能是「__proto__」等特殊串，必须始终按数据键存取
+  const state = nameMap();
   for (const p of props) state[p.name] = p.location;
 
   // 溯源：道具 -> 最后一次成功转移它的提示号（null = 从未成功转移，现处初始区位）
-  const lastMoved = {};
+  const lastMoved = nameMap();
   for (const p of props) lastMoved[p.name] = null;
 
   const run = runCues(locations, cues, state, lastMoved);
@@ -186,8 +219,8 @@ function replay(locations, props, cues) {
  * @returns {ReturnType<replay>}
  */
 function replayFrom(locations, restCues, startState, startLastMoved) {
-  const state = { ...startState };
-  const lastMoved = { ...startLastMoved };
+  const state = cloneMap(startState);
+  const lastMoved = cloneMap(startLastMoved);
   const run = runCues(locations, restCues, state, lastMoved);
   return {
     results: run.results,
@@ -241,4 +274,15 @@ function diffReplays(before, after) {
   return { changedCues, movedProps };
 }
 
-module.exports = { replay, replayFrom, runCues, occupancyConflicts, buildFinalLocations, ONSITE_MARK, diffReplays };
+module.exports = {
+  replay,
+  replayFrom,
+  runCues,
+  occupancyConflicts,
+  buildFinalLocations,
+  ONSITE_MARK,
+  diffReplays,
+  nameMap,
+  cloneMap,
+  hasOwn,
+};

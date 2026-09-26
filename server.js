@@ -8,6 +8,9 @@ const {
   occupancyConflicts,
   ONSITE_MARK,
   diffReplays,
+  nameMap,
+  cloneMap,
+  hasOwn,
 } = require('./replay');
 const { computeAssignments } = require('./assignment');
 const { computeRotation } = require('./rotation');
@@ -436,7 +439,8 @@ app.post('/api/onsite/simulate', (req, res) => {
   }
   if (!Array.isArray(raw)) return badSim(res, '现场区位录入格式不正确');
 
-  const overrides = {};
+  // 无原型映射：道具名可能是「__proto__」等特殊串，按名称存取必须走数据键
+  const overrides = nameMap();
   for (const item of raw) {
     if (!item || typeof item !== 'object') return badSim(res, '现场区位录入格式不正确');
     const prop = String(item.prop || '').trim();
@@ -447,7 +451,7 @@ app.post('/api/onsite/simulate', (req, res) => {
     if (!propNames.has(prop)) return badSim(res, `道具「${prop}」不存在`);
     if (location !== '' && !locNames.has(location))
       return badSim(res, `现场区位「${location}」不存在`);
-    if (Object.prototype.hasOwnProperty.call(overrides, prop))
+    if (hasOwn(overrides, prop))
       return badSim(res, `道具「${prop}」的现场区位被重复录入`);
     overrides[prop] = location;
   }
@@ -461,9 +465,10 @@ app.post('/api/onsite/simulate', (req, res) => {
   const planStateAtBreakpoint = planPrefix.finalState;
 
   // 2) 校正为现场状态：未录入者沿用该断点的计划区位
-  const onsiteState = { ...planStateAtBreakpoint };
-  const onsiteLastMoved = { ...planPrefix.lastMoved };
-  const recorded = {};
+  // 用 cloneMap 而非展开：计划状态可能含「__proto__」等特殊名称的数据键
+  const onsiteState = cloneMap(planStateAtBreakpoint);
+  const onsiteLastMoved = cloneMap(planPrefix.lastMoved);
+  const recorded = nameMap();
   for (const [prop, location] of Object.entries(overrides)) {
     if (location !== '') {
       onsiteState[prop] = location;
@@ -504,7 +509,7 @@ app.post('/api/onsite/simulate', (req, res) => {
       prop: p.name,
       plan: planStateAtBreakpoint[p.name],
       onsite: onsiteState[p.name],
-      recorded: Object.prototype.hasOwnProperty.call(recorded, p.name),
+      recorded: hasOwn(recorded, p.name),
     }))
     .filter((d) => d.plan !== d.onsite);
 

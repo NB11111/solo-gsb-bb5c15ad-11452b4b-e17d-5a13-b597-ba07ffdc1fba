@@ -790,7 +790,8 @@ $('#shift-form').addEventListener('submit', async (e) => {
 /* ---------- 现场偏差推演（不写库） ---------- */
 
 let simBreakpoint = '';      // 选中的断点提示号
-let simOverrides = {};       // 道具 -> 现场区位（'' 或缺失 = 沿用计划）
+// 无原型对象：道具名可能是「__proto__」，普通对象给该键赋值会命中原型访问器而丢失
+let simOverrides = Object.create(null); // 道具 -> 现场区位（'' 或缺失 = 沿用计划）
 let simResult = null;        // 最近一次成功推演的结果，全局状态一变即失效
 
 function clearSimResult() {
